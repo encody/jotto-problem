@@ -8,9 +8,9 @@ use std::{
 const LOWERCASE_A: u8 = 97;
 
 #[derive(Default, PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug, Hash)]
-struct Word1(pub u32);
+struct Word(pub u32);
 
-impl Word1 {
+impl Word {
     pub fn get_chars(&self) -> BTreeSet<char> {
         let mut set = BTreeSet::new();
 
@@ -48,7 +48,7 @@ impl Word1 {
     }
 }
 
-impl FromStr for Word1 {
+impl FromStr for Word {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -61,10 +61,7 @@ impl FromStr for Word1 {
     }
 }
 
-fn printify_words(
-    words: &BTreeSet<Word1>,
-    original_word: &HashMap<Word1, BTreeSet<&str>>,
-) -> String {
+fn printify_words(words: &BTreeSet<Word>, original_word: &HashMap<Word, BTreeSet<&str>>) -> String {
     format!(
         "{:?}",
         words
@@ -75,13 +72,14 @@ fn printify_words(
 }
 
 fn main() {
-    let path = "/Users/jacob/Downloads/wordle-answers-alphabetical.txt";
+    //let path = "/Users/jacob/Downloads/wordle-answers-alphabetical.txt";
     //let path = "/Users/jacob/Downloads/wordle-allowed-guesses.txt";
+    let path = "/Users/jacob/Downloads/words_alpha.txt";
     let word_length = 5;
 
     let contents = fs::read_to_string(path).unwrap();
 
-    let mut original_word: HashMap<Word1, BTreeSet<&str>> = HashMap::new();
+    let mut original_word: HashMap<Word, BTreeSet<&str>> = HashMap::new();
 
     let lines = contents.lines();
 
@@ -90,7 +88,7 @@ fn main() {
     let words = lines
         .filter_map(|s| {
             let s = s.trim();
-            let w = Word1::from_str(s).unwrap();
+            let w = Word::from_str(s).unwrap();
             if w.len() == word_length {
                 if let Some(word_set) = original_word.get_mut(&w) {
                     word_set.insert(s);
@@ -105,15 +103,20 @@ fn main() {
             }
         })
         //.take(500)
-        .collect::<BTreeSet<Word1>>();
+        .collect::<BTreeSet<Word>>();
 
     let words = words.into_iter().collect::<Vec<_>>();
 
+    println!(
+        "Found {} unique {word_length}-letter combinations",
+        words.len(),
+    );
+
     fn mds(
-        already_used: Word1,
-        words: &[Word1],
-        monitor: Option<&dyn Fn(usize, &BTreeSet<BTreeSet<Word1>>)>,
-    ) -> (usize, BTreeSet<BTreeSet<Word1>>) {
+        already_used: Word,
+        words: &[Word],
+        monitor: Option<&dyn Fn(usize, &BTreeSet<BTreeSet<Word>>)>,
+    ) -> (usize, BTreeSet<BTreeSet<Word>>) {
         let mut solutions = BTreeSet::new();
         let mut solution_len = 0;
 
@@ -176,7 +179,7 @@ fn main() {
 
     println!(
         "Found {} solutions that are {solution_len} words long",
-        solutions.len()
+        solutions.len(),
     );
 
     for (i, solution) in solutions.iter().enumerate() {
@@ -185,6 +188,6 @@ fn main() {
 
     println!(
         "Found {} solutions that are {solution_len} words long",
-        solutions.len()
+        solutions.len(),
     );
 }
