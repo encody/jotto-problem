@@ -6,20 +6,30 @@ use std::{
 };
 
 struct PathList<'a, T> {
+    length: usize,
     value: T,
     next: Option<&'a Self>,
 }
 
 impl<'a, T> PathList<'a, T> {
     pub fn new(value: T) -> Self {
-        Self { value, next: None }
+        Self {
+            length: 1,
+            value,
+            next: None,
+        }
     }
 
     pub fn prefix(&'a self, value: T) -> PathList<'a, T> {
         Self {
+            length: self.length + 1,
             value,
             next: Some(self),
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.length
     }
 
     pub fn iter(&self) -> PathListIter<T> {
@@ -54,12 +64,12 @@ impl<T> Graph<T> {
         }
     }
 
-    pub fn node(&self, node_index: &NodeIndex) -> Option<&Node<T>> {
-        self.nodes.get(node_index.0)
+    pub fn node(&self, node_index: &NodeIndex) -> &Node<T> {
+        &self.nodes[node_index.0]
     }
 
-    pub fn edge(&self, edge_index: &EdgeIndex) -> Option<&Edge> {
-        self.edges.get(edge_index.0)
+    pub fn edge(&self, edge_index: &EdgeIndex) -> &Edge {
+        &self.edges[edge_index.0]
     }
 
     pub fn iter_edges(&self, node_index: &NodeIndex) -> EdgeIter<'_, T> {
@@ -111,15 +121,13 @@ impl<'a, T> Iterator for EdgeIter<'a, T> {
     type Item = &'a EdgeIndex;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(edge_index) = self.edge_index {
+        self.edge_index.map(|edge_index| {
             let edge = &self.graph.edges[edge_index.0];
 
             self.edge_index = edge.next.as_ref();
 
-            Some(edge_index)
-        } else {
-            None
-        }
+            edge_index
+        })
     }
 }
 
@@ -263,15 +271,24 @@ fn main() {
     let (solution_len, solutions) = words.iter().map(|w| &node_indices[w]).enumerate().fold(
         (0, Vec::new()),
         |(final_len, mut final_set), (i, n)| {
-            let (len, set) = deepest(&graph, n, &PathList::new(&graph.node(n).unwrap().value));
+            let (len, set) = deepest_paths(
+                &graph,
+                n,
+                &PathList::new(&graph.node(n).value),
+                target_length,
+            );
 
-            let (len, set) = match (len.cmp(&target_length), len.cmp(&final_len)) {
-                (Ordering::Less, _) | (_, Ordering::Less) => (final_len, final_set),
-                (_, Ordering::Equal) => {
-                    final_set.extend(set);
-                    (final_len, final_set)
+            let (len, set) = if len < target_length {
+                (final_len, final_set)
+            } else {
+                match len.cmp(&final_len) {
+                    Ordering::Less => (final_len, final_set),
+                    Ordering::Equal => {
+                        final_set.extend(set);
+                        (final_len, final_set)
+                    }
+                    Ordering::Greater => (len, set),
                 }
-                (_, Ordering::Greater) => (len, set),
             };
 
             let pc = (i as f32) / (words.len() as f32) * 100.0;
@@ -286,120 +303,68 @@ fn main() {
         },
     );
 
-    fn deepest<'a, 'g>(
+    fn deepest_paths<'a, 'g>(
         graph: &'g Graph<Word>,
         node_ix: &'g NodeIndex,
         current_path: &'a PathList<&Word>,
+        target_length: usize,
     ) -> (usize, Vec<Vec<&'g NodeIndex>>) {
-        let (mut longest_path, mut all_paths) = graph
+        let filtered_edges = graph
             .iter_edges(node_ix)
             .filter_map(|edge_ix| {
-                let next_node_ix = &graph.edge(edge_ix).unwrap().target;
+                let next_node_ix = &graph.edge(edge_ix).target;
 
-                let next_node = graph.node(next_node_ix).unwrap();
+                let next_node = graph.node(next_node_ix);
 
                 current_path
                     .iter()
                     .all(|w| next_node.value.is_disjoint(w))
                     .then(|| {
                         let next_path = current_path.prefix(&next_node.value);
-                        deepest(graph, next_node_ix, &next_path)
+                        (next_node_ix, next_path)
                     })
             })
-            .fold((0, Vec::new()), |(len, mut a), (l, b)| {
-                match l.cmp(&len) {
-                    Ordering::Less => (len, a),
-                    Ordering::Equal => {
-                        a.extend(b);
-                        (len, a)
-                    }
-                    Ordering::Greater => (l, b),
-                }
-            });
+            .collect::<Vec<_>>();
 
-        if longest_path == 0 {
-            all_paths.push(vec![node_ix]);
+        if filtered_edges.len() < (target_length - current_path.len()) {
+            return Default::default();
+        }
+
+        let (mut path_len, mut paths) = filtered_edges
+            .into_iter()
+            .map(|(next_node_ix, next_path)| {
+                deepest_paths(graph, next_node_ix, &next_path, target_length)
+            })
+            .fold(
+                (0, Vec::new()),
+                |(path_len, mut paths), (node_path_len, node_paths)| match node_path_len
+                    .cmp(&path_len)
+                {
+                    Ordering::Less => (path_len, paths),
+                    Ordering::Equal => {
+                        paths.extend(node_paths);
+                        (path_len, paths)
+                    }
+                    Ordering::Greater => (node_path_len, node_paths),
+                },
+            );
+
+        if path_len == 0 {
+            (1, vec![vec![node_ix]])
         } else {
-            all_paths = all_paths
+            paths = paths
                 .into_iter()
                 .map(|mut s| {
                     s.push(node_ix);
                     s
                 })
                 .collect();
+
+            path_len += 1;
+
+            (path_len, paths)
         }
-
-        longest_path += 1;
-
-        (longest_path, all_paths)
     }
-
-    //     fn mds(
-    //         already_used: Word,
-    //         words: &[Word],
-    //         monitor: Option<&dyn Fn(usize, &BTreeSet<BTreeSet<Word>>)>,
-    //     ) -> (usize, BTreeSet<BTreeSet<Word>>) {
-    //         let mut solutions = BTreeSet::new();
-    //         let mut solution_len = 0;
-    //
-    //         for (i, word) in words
-    //             .iter()
-    //             .enumerate()
-    //             .filter(|(_, word)| word.is_disjoint(already_used))
-    //         {
-    //             let (mut sub_solution_len, mut sub_solutions) =
-    //                 mds(already_used.union(*word), &words[i..], None);
-    //
-    //             sub_solutions = sub_solutions
-    //                 .into_iter()
-    //                 .map(|mut set| {
-    //                     set.insert(*word);
-    //                     set
-    //                 })
-    //                 .collect::<BTreeSet<_>>();
-    //
-    //             if sub_solutions.is_empty() {
-    //                 sub_solutions.insert(BTreeSet::from([*word]));
-    //             }
-    //
-    //             sub_solution_len += 1;
-    //
-    //             match sub_solution_len.cmp(&solution_len) {
-    //                 Ordering::Greater => {
-    //                     solution_len = sub_solution_len;
-    //                     solutions = sub_solutions;
-    //                 }
-    //                 Ordering::Equal => {
-    //                     solutions.extend(sub_solutions);
-    //                 }
-    //                 _ => {}
-    //             }
-    //
-    //             if let Some(monitor) = monitor {
-    //                 monitor(i, &solutions);
-    //             }
-    //         }
-    //
-    //         (solution_len, solutions)
-    //     }
-    //
-    //     let (solution_len, solutions) = mds(
-    //         Default::default(),
-    //         &words,
-    //         Some(&|i, set| {
-    //             let pc = i as f32 / words.len() as f32 * 100.0;
-    //             let single_words_opt = set.iter().next();
-    //             let num_solutions = set.len();
-    //             if let Some(sample) = single_words_opt {
-    //                 let solution_len = sample.len();
-    //                 println!(
-    //                     "Progress: {i} / {} {pc:.2}%\tFound {num_solutions} {solution_len}-word solutions - {}",
-    //                     words.len(),
-    //                     printify_words(sample, &original_word),
-    //                 );
-    //             }
-    //         }),
-    //     );
 
     println!(
         "Found {} solutions that are {solution_len} words long",
@@ -410,10 +375,7 @@ fn main() {
         println!(
             "\t[{i}]: {}",
             printify_words(
-                &solution
-                    .iter()
-                    .map(|n| graph.node(n).unwrap().value)
-                    .collect(),
+                &solution.iter().map(|n| graph.node(n).value).collect(),
                 &original_word
             )
         );
