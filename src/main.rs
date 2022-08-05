@@ -172,9 +172,11 @@ fn main() {
         Some(&|i, set| {
             let pc = i as f32 / words.len() as f32 * 100.0;
             let single_words_opt = set.iter().next();
+            let num_solutions = set.len();
             if let Some(sample) = single_words_opt {
+                let solution_len = sample.len();
                 println!(
-                    "Progress: {i} / {} {pc:.2}% {}",
+                    "Progress: {i} / {} {pc:.2}%\tFound {num_solutions} {solution_len}-word solutions - {}",
                     words.len(),
                     printify_words(sample, &original_word),
                 );
