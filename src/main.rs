@@ -1,3 +1,5 @@
+// 33m 48s
+
 use std::{
     cmp::Ordering,
     collections::{BTreeSet, HashMap},
@@ -187,7 +189,7 @@ impl FromStr for Word {
     }
 }
 
-fn printify_words(words: &BTreeSet<Word>, original_word: &HashMap<Word, BTreeSet<&str>>) -> String {
+fn printify_words(words: &[Word], original_word: &HashMap<Word, Vec<&str>>) -> String {
     format!(
         "{:?}",
         words
@@ -197,16 +199,25 @@ fn printify_words(words: &BTreeSet<Word>, original_word: &HashMap<Word, BTreeSet
     )
 }
 
+fn scaled_progress(completed_items: usize, total_items: usize) -> f64 {
+    let total_work = total_items * total_items;
+
+    let remaining_items = total_items - completed_items;
+    let completed_work = total_work - (remaining_items * remaining_items);
+
+    completed_work as f64 / total_work as f64
+}
+
 fn main() {
     //let path = "/Users/jacob/Downloads/wordle-answers-alphabetical.txt";
     //let path = "/Users/jacob/Downloads/wordle-allowed-guesses.txt";
     let path = "/Users/jacob/Downloads/words_alpha.txt";
-    let word_length = 5;
-    let target_length = 5;
+    let word_length = 5; // # of letters
+    let solution_length = 5; // # of words
 
     let contents = fs::read_to_string(path).unwrap();
 
-    let mut original_word: HashMap<Word, BTreeSet<&str>> = HashMap::new();
+    let mut original_word: HashMap<Word, Vec<&str>> = HashMap::new();
 
     let lines = contents.lines();
 
@@ -216,17 +227,16 @@ fn main() {
         .filter_map(|s| {
             let s = s.trim();
 
-            if s.len() != 5 {
+            if s.len() != word_length {
                 return None;
             }
 
             let w = Word::from_str(s).unwrap();
             if w.len() == word_length {
                 if let Some(word_set) = original_word.get_mut(&w) {
-                    word_set.insert(s);
+                    word_set.push(s);
                 } else {
-                    let mut word_set = BTreeSet::new();
-                    word_set.insert(s);
+                    let word_set = vec![s];
                     original_word.insert(w, word_set);
                 }
                 Some(w)
@@ -251,6 +261,9 @@ fn main() {
     let graph = words
         .iter()
         .enumerate()
+        // deepest_paths will go through the words in order, so we only need to set up the
+        // graph from back to front. Each word will only have links to words that appear
+        // later in the words list.
         .rev()
         .fold(Graph::new(), |mut graph, (i, word)| {
             let node_ix = graph.add_node(*word);
@@ -275,10 +288,10 @@ fn main() {
                 &graph,
                 n,
                 &PathList::new(&graph.node(n).value),
-                target_length,
+                solution_length,
             );
 
-            let (len, set) = if len < target_length {
+            let (len, set) = if len < solution_length {
                 (final_len, final_set)
             } else {
                 match len.cmp(&final_len) {
@@ -291,12 +304,11 @@ fn main() {
                 }
             };
 
-            let pc = (i as f32) / (words.len() as f32) * 100.0;
+            let spc = scaled_progress(i + 1, words.len()) * 100.0;
             println!(
-                "Finished {i} / {} ({pc:.2}%)\t{} {}-word solutions found",
+                "Finished {i} / {} ({spc:.2}%)\t{solution_length}-word solutions found: {}",
                 words.len(),
                 set.len(),
-                target_length,
             );
 
             (len, set)
@@ -318,6 +330,7 @@ fn main() {
 
                 current_path
                     .iter()
+                    .skip(1) // node_ix is in current_path, so edges were already checked
                     .all(|w| next_node.value.is_disjoint(w))
                     .then(|| {
                         let next_path = current_path.prefix(&next_node.value);
@@ -375,7 +388,10 @@ fn main() {
         println!(
             "\t[{i}]: {}",
             printify_words(
-                &solution.iter().map(|n| graph.node(n).value).collect(),
+                &solution
+                    .iter()
+                    .map(|n| graph.node(n).value)
+                    .collect::<Vec<_>>(),
                 &original_word
             )
         );
