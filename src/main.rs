@@ -88,6 +88,11 @@ fn main() {
     let words = lines
         .filter_map(|s| {
             let s = s.trim();
+
+            if s.len() != 5 {
+                return None;
+            }
+
             let w = Word::from_str(s).unwrap();
             if w.len() == word_length {
                 if let Some(word_set) = original_word.get_mut(&w) {
