@@ -5,6 +5,124 @@ use std::{
     str::FromStr,
 };
 
+struct PathList<'a, T> {
+    value: T,
+    next: Option<&'a Self>,
+}
+
+impl<'a, T> PathList<'a, T> {
+    pub fn new(value: T) -> Self {
+        Self { value, next: None }
+    }
+
+    pub fn prefix(&'a self, value: T) -> PathList<'a, T> {
+        Self {
+            value,
+            next: Some(self),
+        }
+    }
+
+    pub fn iter(&self) -> PathListIter<T> {
+        PathListIter(Some(self))
+    }
+}
+
+struct PathListIter<'a, T>(pub Option<&'a PathList<'a, T>>);
+
+impl<'a, T> Iterator for PathListIter<'a, T> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.map(|list| {
+            let retval = &list.value;
+            self.0 = list.next;
+            retval
+        })
+    }
+}
+
+struct Graph<T> {
+    pub nodes: Vec<Node<T>>,
+    pub edges: Vec<Edge>,
+}
+
+impl<T> Graph<T> {
+    pub fn new() -> Self {
+        Self {
+            nodes: Vec::new(),
+            edges: Vec::new(),
+        }
+    }
+
+    pub fn node(&self, node_index: &NodeIndex) -> Option<&Node<T>> {
+        self.nodes.get(node_index.0)
+    }
+
+    pub fn edge(&self, edge_index: &EdgeIndex) -> Option<&Edge> {
+        self.edges.get(edge_index.0)
+    }
+
+    pub fn iter_edges(&self, node_index: &NodeIndex) -> EdgeIter<'_, T> {
+        EdgeIter {
+            graph: self,
+            edge_index: self.nodes[node_index.0].edges.as_ref(),
+        }
+    }
+
+    pub fn add_node(&mut self, value: T) -> NodeIndex {
+        let ix = self.nodes.len();
+        self.nodes.push(Node { value, edges: None });
+        NodeIndex(ix)
+    }
+
+    pub fn add_edge(&mut self, source: &NodeIndex, target: NodeIndex) {
+        let ix = EdgeIndex(self.edges.len());
+        let node = &mut self.nodes[source.0];
+        self.edges.push(Edge {
+            target,
+            next: node.edges.clone(),
+        });
+        node.edges = Some(ix);
+    }
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Debug)]
+struct NodeIndex(pub usize);
+
+struct Node<T> {
+    pub value: T,
+    pub edges: Option<EdgeIndex>,
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Debug)]
+struct EdgeIndex(pub usize);
+
+struct Edge {
+    pub target: NodeIndex,
+    pub next: Option<EdgeIndex>,
+}
+
+struct EdgeIter<'a, T> {
+    pub graph: &'a Graph<T>,
+    pub edge_index: Option<&'a EdgeIndex>,
+}
+
+impl<'a, T> Iterator for EdgeIter<'a, T> {
+    type Item = &'a EdgeIndex;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(edge_index) = self.edge_index {
+            let edge = &self.graph.edges[edge_index.0];
+
+            self.edge_index = edge.next.as_ref();
+
+            Some(edge_index)
+        } else {
+            None
+        }
+    }
+}
+
 const LOWERCASE_A: u8 = 97;
 
 #[derive(Default, PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug, Hash)]
@@ -35,15 +153,15 @@ impl Word {
         total as usize
     }
 
-    pub fn intersects(&self, other: Self) -> bool {
+    pub fn intersects(&self, other: &Self) -> bool {
         (self.0 & other.0) != 0
     }
 
-    pub fn is_disjoint(&self, other: Self) -> bool {
+    pub fn is_disjoint(&self, other: &Self) -> bool {
         (self.0 & other.0) == 0
     }
 
-    pub fn union(&self, other: Self) -> Self {
+    pub fn union(&self, other: &Self) -> Self {
         Self(self.0 | other.0)
     }
 }
@@ -76,6 +194,7 @@ fn main() {
     //let path = "/Users/jacob/Downloads/wordle-allowed-guesses.txt";
     let path = "/Users/jacob/Downloads/words_alpha.txt";
     let word_length = 5;
+    let target_length = 5;
 
     let contents = fs::read_to_string(path).unwrap();
 
@@ -107,7 +226,7 @@ fn main() {
                 None
             }
         })
-        //.take(500)
+        // .take(10)
         .collect::<BTreeSet<Word>>();
 
     let words = words.into_iter().collect::<Vec<_>>();
@@ -117,72 +236,170 @@ fn main() {
         words.len(),
     );
 
-    fn mds(
-        already_used: Word,
-        words: &[Word],
-        monitor: Option<&dyn Fn(usize, &BTreeSet<BTreeSet<Word>>)>,
-    ) -> (usize, BTreeSet<BTreeSet<Word>>) {
-        let mut solutions = BTreeSet::new();
-        let mut solution_len = 0;
+    let mut node_indices = HashMap::new();
 
-        for (i, word) in words
-            .iter()
-            .enumerate()
-            .filter(|(_, word)| word.is_disjoint(already_used))
-        {
-            let (mut sub_solution_len, mut sub_solutions) =
-                mds(already_used.union(*word), &words[i..], None);
+    println!("Constructing graph");
 
-            sub_solutions = sub_solutions
+    let graph = words
+        .iter()
+        .enumerate()
+        .rev()
+        .fold(Graph::new(), |mut graph, (i, word)| {
+            let node_ix = graph.add_node(*word);
+            node_indices.insert(word, node_ix.clone());
+
+            words[(i + 1)..]
+                .iter()
+                .filter(|w| word.is_disjoint(*w))
+                .for_each(|w| {
+                    graph.add_edge(&node_ix, node_indices[w].clone());
+                });
+
+            graph
+        });
+
+    println!("Done constructing graph");
+
+    let (solution_len, solutions) = words.iter().map(|w| &node_indices[w]).enumerate().fold(
+        (0, Vec::new()),
+        |(final_len, mut final_set), (i, n)| {
+            let (len, set) = deepest(&graph, n, &PathList::new(&graph.node(n).unwrap().value));
+
+            let (len, set) = match (len.cmp(&target_length), len.cmp(&final_len)) {
+                (Ordering::Less, _) | (_, Ordering::Less) => (final_len, final_set),
+                (_, Ordering::Equal) => {
+                    final_set.extend(set);
+                    (final_len, final_set)
+                }
+                (_, Ordering::Greater) => (len, set),
+            };
+
+            let pc = (i as f32) / (words.len() as f32) * 100.0;
+            println!(
+                "Finished {i} / {} ({pc:.2}%)\t{} {}-word solutions found",
+                words.len(),
+                set.len(),
+                target_length,
+            );
+
+            (len, set)
+        },
+    );
+
+    fn deepest<'a, 'g>(
+        graph: &'g Graph<Word>,
+        node_ix: &'g NodeIndex,
+        current_path: &'a PathList<&Word>,
+    ) -> (usize, Vec<Vec<&'g NodeIndex>>) {
+        let (mut longest_path, mut all_paths) = graph
+            .iter_edges(node_ix)
+            .filter_map(|edge_ix| {
+                let next_node_ix = &graph.edge(edge_ix).unwrap().target;
+
+                let next_node = graph.node(next_node_ix).unwrap();
+
+                current_path
+                    .iter()
+                    .all(|w| next_node.value.is_disjoint(w))
+                    .then(|| {
+                        let next_path = current_path.prefix(&next_node.value);
+                        deepest(graph, next_node_ix, &next_path)
+                    })
+            })
+            .fold((0, Vec::new()), |(len, mut a), (l, b)| {
+                match l.cmp(&len) {
+                    Ordering::Less => (len, a),
+                    Ordering::Equal => {
+                        a.extend(b);
+                        (len, a)
+                    }
+                    Ordering::Greater => (l, b),
+                }
+            });
+
+        if longest_path == 0 {
+            all_paths.push(vec![node_ix]);
+        } else {
+            all_paths = all_paths
                 .into_iter()
-                .map(|mut set| {
-                    set.insert(*word);
-                    set
+                .map(|mut s| {
+                    s.push(node_ix);
+                    s
                 })
-                .collect::<BTreeSet<_>>();
-
-            if sub_solutions.is_empty() {
-                sub_solutions.insert(BTreeSet::from([*word]));
-            }
-
-            sub_solution_len += 1;
-
-            match sub_solution_len.cmp(&solution_len) {
-                Ordering::Greater => {
-                    solution_len = sub_solution_len;
-                    solutions = sub_solutions;
-                }
-                Ordering::Equal => {
-                    solutions.extend(sub_solutions);
-                }
-                _ => {}
-            }
-
-            if let Some(monitor) = monitor {
-                monitor(i, &solutions);
-            }
+                .collect();
         }
 
-        (solution_len, solutions)
+        longest_path += 1;
+
+        (longest_path, all_paths)
     }
 
-    let (solution_len, solutions) = mds(
-        Default::default(),
-        &words,
-        Some(&|i, set| {
-            let pc = i as f32 / words.len() as f32 * 100.0;
-            let single_words_opt = set.iter().next();
-            let num_solutions = set.len();
-            if let Some(sample) = single_words_opt {
-                let solution_len = sample.len();
-                println!(
-                    "Progress: {i} / {} {pc:.2}%\tFound {num_solutions} {solution_len}-word solutions - {}",
-                    words.len(),
-                    printify_words(sample, &original_word),
-                );
-            }
-        }),
-    );
+    //     fn mds(
+    //         already_used: Word,
+    //         words: &[Word],
+    //         monitor: Option<&dyn Fn(usize, &BTreeSet<BTreeSet<Word>>)>,
+    //     ) -> (usize, BTreeSet<BTreeSet<Word>>) {
+    //         let mut solutions = BTreeSet::new();
+    //         let mut solution_len = 0;
+    //
+    //         for (i, word) in words
+    //             .iter()
+    //             .enumerate()
+    //             .filter(|(_, word)| word.is_disjoint(already_used))
+    //         {
+    //             let (mut sub_solution_len, mut sub_solutions) =
+    //                 mds(already_used.union(*word), &words[i..], None);
+    //
+    //             sub_solutions = sub_solutions
+    //                 .into_iter()
+    //                 .map(|mut set| {
+    //                     set.insert(*word);
+    //                     set
+    //                 })
+    //                 .collect::<BTreeSet<_>>();
+    //
+    //             if sub_solutions.is_empty() {
+    //                 sub_solutions.insert(BTreeSet::from([*word]));
+    //             }
+    //
+    //             sub_solution_len += 1;
+    //
+    //             match sub_solution_len.cmp(&solution_len) {
+    //                 Ordering::Greater => {
+    //                     solution_len = sub_solution_len;
+    //                     solutions = sub_solutions;
+    //                 }
+    //                 Ordering::Equal => {
+    //                     solutions.extend(sub_solutions);
+    //                 }
+    //                 _ => {}
+    //             }
+    //
+    //             if let Some(monitor) = monitor {
+    //                 monitor(i, &solutions);
+    //             }
+    //         }
+    //
+    //         (solution_len, solutions)
+    //     }
+    //
+    //     let (solution_len, solutions) = mds(
+    //         Default::default(),
+    //         &words,
+    //         Some(&|i, set| {
+    //             let pc = i as f32 / words.len() as f32 * 100.0;
+    //             let single_words_opt = set.iter().next();
+    //             let num_solutions = set.len();
+    //             if let Some(sample) = single_words_opt {
+    //                 let solution_len = sample.len();
+    //                 println!(
+    //                     "Progress: {i} / {} {pc:.2}%\tFound {num_solutions} {solution_len}-word solutions - {}",
+    //                     words.len(),
+    //                     printify_words(sample, &original_word),
+    //                 );
+    //             }
+    //         }),
+    //     );
 
     println!(
         "Found {} solutions that are {solution_len} words long",
@@ -190,7 +407,16 @@ fn main() {
     );
 
     for (i, solution) in solutions.iter().enumerate() {
-        println!("\t[{i}]: {}", printify_words(solution, &original_word));
+        println!(
+            "\t[{i}]: {}",
+            printify_words(
+                &solution
+                    .iter()
+                    .map(|n| graph.node(n).unwrap().value)
+                    .collect(),
+                &original_word
+            )
+        );
     }
 
     println!(
