@@ -1,4 +1,4 @@
-// Best time: 1.26s
+// Best time: 1.25s
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
