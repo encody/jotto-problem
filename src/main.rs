@@ -1,5 +1,6 @@
-// 33m 48s
+// Best time: 1.30s
 
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
     cmp::Ordering,
     collections::{BTreeSet, HashMap},
@@ -7,49 +8,79 @@ use std::{
     str::FromStr,
 };
 
-struct PathList<'a, T> {
+struct Blacklist(pub FxHashSet<Word>);
+
+impl Blacklist {
+    pub fn new() -> Self {
+        Self(FxHashSet::default())
+    }
+
+    pub fn add(&mut self, item: &Word) {
+        self.0.insert(*item);
+    }
+
+    pub fn contains(&self, item: &Word) -> bool {
+        self.0.contains(item)
+    }
+}
+
+struct PathList<'a> {
     length: usize,
-    value: T,
+    value: &'a Word,
+    aggregate: Word,
     next: Option<&'a Self>,
 }
 
-impl<'a, T> PathList<'a, T> {
-    pub fn new(value: T) -> Self {
+impl<'a> PathList<'a> {
+    pub fn new(value: &'a Word) -> Self {
         Self {
             length: 1,
             value,
+            aggregate: *value,
             next: None,
         }
     }
 
-    pub fn prefix(&'a self, value: T) -> PathList<'a, T> {
-        Self {
+    pub fn try_add(&'a self, value: &'a Word) -> Option<PathList<'a>> {
+        self.aggregate.is_disjoint(value).then(|| Self {
             length: self.length + 1,
             value,
+            aggregate: value.union(&self.aggregate),
             next: Some(self),
-        }
+        })
     }
 
     pub fn len(&self) -> usize {
         self.length
     }
 
-    pub fn iter(&self) -> PathListIter<T> {
+    pub fn iter(&self) -> PathListIter {
         PathListIter(Some(self))
     }
 }
 
-struct PathListIter<'a, T>(pub Option<&'a PathList<'a, T>>);
+struct PathListIter<'a>(pub Option<&'a PathList<'a>>);
 
-impl<'a, T> Iterator for PathListIter<'a, T> {
-    type Item = &'a T;
+impl<'a> Iterator for PathListIter<'a> {
+    type Item = &'a Word;
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let l = self.0.map(|p| p.len()).unwrap_or(0);
+        (l, Some(l))
+    }
 
     fn next(&mut self) -> Option<Self::Item> {
         self.0.map(|list| {
-            let retval = &list.value;
+            let retval = list.value;
             self.0 = list.next;
             retval
         })
+    }
+}
+
+impl<'a> ExactSizeIterator for PathListIter<'a> {
+    fn len(&self) -> usize {
+        self.0.map(|p| p.len()).unwrap_or(0)
     }
 }
 
@@ -83,7 +114,11 @@ impl<T> Graph<T> {
 
     pub fn add_node(&mut self, value: T) -> NodeIndex {
         let ix = self.nodes.len();
-        self.nodes.push(Node { value, maximum_further_depth: 0, edges: None });
+        self.nodes.push(Node {
+            value,
+            maximum_further_depth: 0,
+            edges: None,
+        });
         NodeIndex(ix)
     }
 
@@ -142,8 +177,20 @@ impl<'a, T> Iterator for EdgeIter<'a, T> {
 
 const LOWERCASE_A: u8 = 97;
 
-#[derive(Default, PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug, Hash)]
+#[derive(Default, Eq, PartialOrd, Ord, Copy, Clone, Debug)]
 struct Word(pub u32);
+
+impl PartialEq for Word {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl std::hash::Hash for Word {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u32(self.0)
+    }
+}
 
 impl Word {
     pub fn get_chars(&self) -> BTreeSet<char> {
@@ -253,7 +300,7 @@ fn main() {
         words.len(),
     );
 
-    let mut node_indices = HashMap::new();
+    let mut node_indices = FxHashMap::default();
 
     println!("Constructing graph");
 
@@ -280,12 +327,15 @@ fn main() {
 
     println!("Done constructing graph");
 
+    let mut blacklist = Blacklist::new();
+
     let (solution_len, solutions) = words.iter().map(|w| &node_indices[w]).enumerate().fold(
         (0, Vec::new()),
         |(final_len, mut final_set), (i, n)| {
             let (len, set) = deepest_paths(
                 &graph,
                 n,
+                &mut blacklist,
                 &PathList::new(&graph.node(n).value),
                 solution_length,
             );
@@ -303,12 +353,12 @@ fn main() {
                 }
             };
 
-            let spc = scaled_progress(i + 1, words.len()) * 100.0;
-            println!(
-                "Finished {i} / {} ({spc:.2}%)\t{solution_length}-word solutions found: {}",
-                words.len(),
-                set.len(),
-            );
+            // let spc = scaled_progress(i + 1, words.len()) * 100.0;
+            // println!(
+            //     "Finished {i} / {} ({spc:.2}%)\t{solution_length}-word solutions found: {}",
+            //     words.len(),
+            //     set.len(),
+            // );
 
             // if !set.is_empty() {
             //     panic!("quick return for testing");
@@ -318,12 +368,19 @@ fn main() {
         },
     );
 
-    fn deepest_paths<'a, 'g>(
+    //println!("Final blacklist size: {}", blacklist.0.len());
+
+    fn deepest_paths<'g>(
         graph: &'g Graph<Word>,
         node_ix: &'g NodeIndex,
-        current_path: &'a PathList<&Word>,
+        blacklist: &mut Blacklist,
+        current_path: &PathList,
         target_length: usize,
     ) -> (usize, Vec<Vec<&'g NodeIndex>>) {
+        if blacklist.contains(&current_path.aggregate) {
+            return Default::default();
+        }
+
         let minimum_required_length_remaining = target_length.saturating_sub(current_path.len());
 
         let filtered_edges = graph
@@ -338,24 +395,20 @@ fn main() {
                 }
 
                 current_path
-                    .iter()
-                    .skip(1) // node_ix is in current_path, so edges were already checked
-                    .all(|w| next_node.value.is_disjoint(w))
-                    .then(|| {
-                        let next_path = current_path.prefix(&next_node.value);
-                        (next_node_ix, next_path)
-                    })
+                    .try_add(&next_node.value)
+                    .map(|next_path| (next_node_ix, next_path))
             })
             .collect::<Vec<_>>();
 
         if filtered_edges.len() < minimum_required_length_remaining {
+            blacklist.add(&current_path.aggregate);
             return Default::default();
         }
 
         let (mut path_len, mut paths) = filtered_edges
             .into_iter()
             .map(|(next_node_ix, next_path)| {
-                deepest_paths(graph, next_node_ix, &next_path, target_length)
+                deepest_paths(graph, next_node_ix, blacklist, &next_path, target_length)
             })
             .fold(
                 (0, Vec::new()),
@@ -371,7 +424,7 @@ fn main() {
                 },
             );
 
-        if path_len == 0 {
+        let (best_len, best_paths) = if path_len == 0 {
             (1, vec![vec![node_ix]])
         } else {
             paths = paths
@@ -385,6 +438,13 @@ fn main() {
             path_len += 1;
 
             (path_len, paths)
+        };
+
+        if best_len < minimum_required_length_remaining {
+            blacklist.add(&current_path.aggregate);
+            Default::default()
+        } else {
+            (best_len, best_paths)
         }
     }
 
