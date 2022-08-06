@@ -1,4 +1,12 @@
 // Best time: 1.25s
+//  - with CLEVER_VOWELS: 0.951s
+
+const PATH: &str = "/Users/jacob/Downloads/words_alpha.txt";
+const WORD_LENGTH: usize = 5; // # of letters
+const SOLUTION_LENGTH: usize = 5; // # of words
+const CLEVER_VOWELS: bool = true;
+
+const VOWELS: &str = "aeiouy";
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
@@ -225,13 +233,7 @@ fn scaled_progress(completed_items: usize, total_items: usize) -> f64 {
 }
 
 fn main() {
-    //let path = "/Users/jacob/Downloads/wordle-answers-alphabetical.txt";
-    //let path = "/Users/jacob/Downloads/wordle-allowed-guesses.txt";
-    let path = "/Users/jacob/Downloads/words_alpha.txt";
-    let word_length = 5; // # of letters
-    let solution_length = 5; // # of words
-
-    let contents = fs::read_to_string(path).unwrap();
+    let contents = fs::read_to_string(PATH).unwrap();
 
     let mut original_word: HashMap<Word, Vec<&str>> = HashMap::new();
 
@@ -243,12 +245,19 @@ fn main() {
         .filter_map(|s| {
             let s = s.trim();
 
-            if s.len() != word_length {
+            if s.len() != WORD_LENGTH {
                 return None;
             }
 
+            if CLEVER_VOWELS {
+                let num_vowels = s.chars().filter(|c| VOWELS.contains(*c)).count();
+                if num_vowels > 2 || num_vowels == 0 {
+                    return None;
+                }
+            }
+
             let w = Word::from_str(s).unwrap();
-            if w.len() == word_length {
+            if w.len() == WORD_LENGTH {
                 if let Some(word_set) = original_word.get_mut(&w) {
                     word_set.push(s);
                 } else {
@@ -266,7 +275,7 @@ fn main() {
     let words = words.into_iter().collect::<Vec<_>>();
 
     println!(
-        "Found {} unique {word_length}-letter combinations",
+        "Found {} unique {WORD_LENGTH}-letter combinations",
         words.len(),
     );
 
@@ -307,10 +316,9 @@ fn main() {
                 n,
                 &mut blacklist,
                 &PathList::new(&graph.node(n).value),
-                solution_length,
             );
 
-            let (len, set) = if len < solution_length {
+            let (len, set) = if len < SOLUTION_LENGTH {
                 (final_len, final_set)
             } else {
                 match len.cmp(&final_len) {
@@ -343,13 +351,12 @@ fn main() {
         node_ix: &'g NodeIndex,
         blacklist: &mut Blacklist,
         current_path: &PathList,
-        target_length: usize,
     ) -> (usize, Vec<Vec<&'g NodeIndex>>) {
         if blacklist.contains(&current_path.aggregate) {
             return Default::default();
         }
 
-        let minimum_required_length_remaining = target_length.saturating_sub(current_path.len());
+        let minimum_required_length_remaining = SOLUTION_LENGTH.saturating_sub(current_path.len());
 
         let filtered_edges = graph
             .iter_edges(node_ix)
@@ -376,7 +383,7 @@ fn main() {
         let (mut path_len, mut paths) = filtered_edges
             .into_iter()
             .map(|(next_node_ix, next_path)| {
-                deepest_paths(graph, next_node_ix, blacklist, &next_path, target_length)
+                deepest_paths(graph, next_node_ix, blacklist, &next_path)
             })
             .fold(
                 (0, Vec::new()),
