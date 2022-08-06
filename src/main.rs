@@ -1,10 +1,10 @@
-// Best time: 1.25s
+// Best time: 1.23s
 //  - with CLEVER_VOWELS: 0.951s
 
 const PATH: &str = "/Users/jacob/Downloads/words_alpha.txt";
 const WORD_LENGTH: usize = 5; // # of letters
 const SOLUTION_LENGTH: usize = 5; // # of words
-const CLEVER_VOWELS: bool = true;
+const CLEVER_VOWELS: bool = false;
 
 const VOWELS: &str = "aeiouy";
 
@@ -64,10 +64,10 @@ struct Graph<T> {
 }
 
 impl<T> Graph<T> {
-    pub fn new() -> Self {
+    pub fn new(capacity: usize) -> Self {
         Self {
-            nodes: Vec::new(),
-            edges: Vec::new(),
+            nodes: Vec::with_capacity(capacity),
+            edges: Vec::with_capacity(capacity * capacity / 10), // approximate observed curve
         }
     }
 
@@ -269,7 +269,6 @@ fn main() {
                 None
             }
         })
-        // .take(10)
         .collect::<BTreeSet<Word>>();
 
     let words = words.into_iter().collect::<Vec<_>>();
@@ -290,7 +289,7 @@ fn main() {
         // graph from back to front. Each word will only have links to words that appear
         // later in the words list.
         .rev()
-        .fold(Graph::new(), |mut graph, (i, word)| {
+        .fold(Graph::new(words.len()), |mut graph, (i, word)| {
             let node_ix = graph.add_node(*word);
             node_indices.insert(word, node_ix.clone());
 
@@ -308,16 +307,18 @@ fn main() {
 
     let mut blacklist = Blacklist::new();
 
-    let (solution_len, solutions) = words.iter().map(|w| &node_indices[w]).fold(
-        (0, Vec::new()),
-        |(final_len, mut final_set), n| {
-            let (len, set) = deepest_paths(
+    let (solution_len, solutions) = words
+        .iter()
+        .map(|w| &node_indices[w])
+        .map(|n| {
+            deepest_paths(
                 &graph,
                 n,
                 &mut blacklist,
                 &PathList::new(&graph.node(n).value),
-            );
-
+            )
+        })
+        .fold((0, Vec::new()), |(final_len, mut final_set), (len, set)| {
             let (len, set) = if len < SOLUTION_LENGTH {
                 (final_len, final_set)
             } else {
@@ -343,8 +344,7 @@ fn main() {
             // }
 
             (len, set)
-        },
-    );
+        });
 
     fn deepest_paths<'g>(
         graph: &'g Graph<Word>,
