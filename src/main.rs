@@ -83,18 +83,24 @@ impl<T> Graph<T> {
 
     pub fn add_node(&mut self, value: T) -> NodeIndex {
         let ix = self.nodes.len();
-        self.nodes.push(Node { value, edges: None });
+        self.nodes.push(Node { value, maximum_further_depth: 0, edges: None });
         NodeIndex(ix)
     }
 
     pub fn add_edge(&mut self, source: &NodeIndex, target: NodeIndex) {
         let ix = EdgeIndex(self.edges.len());
+        let target_depth = {
+            let target_node = &self.nodes[target.0];
+            target_node.maximum_further_depth
+        };
+
         let node = &mut self.nodes[source.0];
         self.edges.push(Edge {
             target,
             next: node.edges.clone(),
         });
         node.edges = Some(ix);
+        node.maximum_further_depth = node.maximum_further_depth.max(target_depth + 1);
     }
 }
 
@@ -103,6 +109,7 @@ struct NodeIndex(pub usize);
 
 struct Node<T> {
     pub value: T,
+    pub maximum_further_depth: usize,
     pub edges: Option<EdgeIndex>,
 }
 
@@ -152,15 +159,7 @@ impl Word {
     }
 
     pub fn len(&self) -> usize {
-        let mut total = 0;
-        let mut i = self.0;
-
-        while i != 0 {
-            total += i & 1;
-            i >>= 1;
-        }
-
-        total as usize
+        self.0.count_ones() as usize
     }
 
     pub fn intersects(&self, other: &Self) -> bool {
@@ -311,6 +310,10 @@ fn main() {
                 set.len(),
             );
 
+            // if !set.is_empty() {
+            //     panic!("quick return for testing");
+            // }
+
             (len, set)
         },
     );
@@ -321,12 +324,18 @@ fn main() {
         current_path: &'a PathList<&Word>,
         target_length: usize,
     ) -> (usize, Vec<Vec<&'g NodeIndex>>) {
+        let minimum_required_length_remaining = target_length.saturating_sub(current_path.len());
+
         let filtered_edges = graph
             .iter_edges(node_ix)
             .filter_map(|edge_ix| {
                 let next_node_ix = &graph.edge(edge_ix).target;
 
                 let next_node = graph.node(next_node_ix);
+
+                if next_node.maximum_further_depth + 1 < minimum_required_length_remaining {
+                    return None;
+                }
 
                 current_path
                     .iter()
@@ -339,7 +348,7 @@ fn main() {
             })
             .collect::<Vec<_>>();
 
-        if filtered_edges.len() < (target_length - current_path.len()) {
+        if filtered_edges.len() < minimum_required_length_remaining {
             return Default::default();
         }
 
