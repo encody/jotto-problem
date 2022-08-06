@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 rustc-hash = "1"
+rayon = "1"
 
 [profile.release]
 lto = true

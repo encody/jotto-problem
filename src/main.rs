@@ -1,19 +1,23 @@
 // Best time: 1.25s
 //  - with CLEVER_VOWELS: 0.951s
+//  - with rayon multithreading: 1.17s
+//  - with rayon multithreading and CLEVER_VOWELS: 1.01s
 
 const PATH: &str = "/Users/jacob/Downloads/words_alpha.txt";
 const WORD_LENGTH: usize = 5; // # of letters
 const SOLUTION_LENGTH: usize = 5; // # of words
-const CLEVER_VOWELS: bool = true;
+const CLEVER_VOWELS: bool = false;
 
 const VOWELS: &str = "aeiouy";
 
+use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
     cmp::Ordering,
     collections::{BTreeSet, HashMap},
     fs,
     str::FromStr,
+    sync::{Arc, Mutex},
 };
 
 struct Blacklist(pub FxHashSet<Word>);
@@ -306,53 +310,57 @@ fn main() {
 
     println!("Done constructing graph");
 
-    let mut blacklist = Blacklist::new();
+    let blacklist = Arc::new(Mutex::new(Blacklist::new()));
 
-    let (solution_len, solutions) = words.iter().map(|w| &node_indices[w]).fold(
-        (0, Vec::new()),
-        |(final_len, mut final_set), n| {
-            let (len, set) = deepest_paths(
+    let (solution_len, solutions) = words
+        .par_iter()
+        .map(|w| &node_indices[w])
+        .map(|n| {
+            deepest_paths(
                 &graph,
                 n,
-                &mut blacklist,
+                Arc::clone(&blacklist),
                 &PathList::new(&graph.node(n).value),
-            );
-
-            let (len, set) = if len < SOLUTION_LENGTH {
-                (final_len, final_set)
-            } else {
-                match len.cmp(&final_len) {
-                    Ordering::Less => (final_len, final_set),
-                    Ordering::Equal => {
-                        final_set.extend(set);
-                        (final_len, final_set)
+            )
+        })
+        .reduce(
+            || (0, Vec::new()),
+            |(final_len, mut final_set), (len, set)| {
+                let (len, set) = if len < SOLUTION_LENGTH {
+                    (final_len, final_set)
+                } else {
+                    match len.cmp(&final_len) {
+                        Ordering::Less => (final_len, final_set),
+                        Ordering::Equal => {
+                            final_set.extend(set);
+                            (final_len, final_set)
+                        }
+                        Ordering::Greater => (len, set),
                     }
-                    Ordering::Greater => (len, set),
-                }
-            };
+                };
 
-            // let spc = scaled_progress(i + 1, words.len()) * 100.0;
-            // println!(
-            //     "Finished {i} / {} ({spc:.2}%)\t{solution_length}-word solutions found: {}",
-            //     words.len(),
-            //     set.len(),
-            // );
+                // let spc = scaled_progress(i + 1, words.len()) * 100.0;
+                // println!(
+                //     "Finished {i} / {} ({spc:.2}%)\t{solution_length}-word solutions found: {}",
+                //     words.len(),
+                //     set.len(),
+                // );
 
-            // if !set.is_empty() {
-            //     panic!("quick return for testing");
-            // }
+                // if !set.is_empty() {
+                //     panic!("quick return for testing");
+                // }
 
-            (len, set)
-        },
-    );
+                (len, set)
+            },
+        );
 
     fn deepest_paths<'g>(
         graph: &'g Graph<Word>,
         node_ix: &'g NodeIndex,
-        blacklist: &mut Blacklist,
+        blacklist: Arc<Mutex<Blacklist>>,
         current_path: &PathList,
     ) -> (usize, Vec<Vec<&'g NodeIndex>>) {
-        if blacklist.contains(&current_path.aggregate) {
+        if blacklist.lock().unwrap().contains(&current_path.aggregate) {
             return Default::default();
         }
 
@@ -376,17 +384,17 @@ fn main() {
             .collect::<Vec<_>>();
 
         if filtered_edges.len() < minimum_required_length_remaining {
-            blacklist.add(&current_path.aggregate);
+            blacklist.lock().unwrap().add(&current_path.aggregate);
             return Default::default();
         }
 
         let (mut path_len, mut paths) = filtered_edges
-            .into_iter()
+            .into_par_iter()
             .map(|(next_node_ix, next_path)| {
-                deepest_paths(graph, next_node_ix, blacklist, &next_path)
+                deepest_paths(graph, next_node_ix, Arc::clone(&blacklist), &next_path)
             })
-            .fold(
-                (0, Vec::new()),
+            .reduce(
+                || (0, Vec::new()),
                 |(path_len, mut paths), (node_path_len, node_paths)| match node_path_len
                     .cmp(&path_len)
                 {
@@ -403,7 +411,7 @@ fn main() {
             (1, vec![vec![node_ix]])
         } else {
             paths = paths
-                .into_iter()
+                .into_par_iter()
                 .map(|mut s| {
                     s.push(node_ix);
                     s
@@ -416,7 +424,7 @@ fn main() {
         };
 
         if best_len < minimum_required_length_remaining {
-            blacklist.add(&current_path.aggregate);
+            blacklist.lock().unwrap().add(&current_path.aggregate);
             Default::default()
         } else {
             (best_len, best_paths)
