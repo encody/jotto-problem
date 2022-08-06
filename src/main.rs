@@ -1,4 +1,4 @@
-// Best time: 1.30s
+// Best time: 1.26s
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
@@ -24,63 +24,29 @@ impl Blacklist {
     }
 }
 
-struct PathList<'a> {
+struct PathList {
     length: usize,
-    value: &'a Word,
     aggregate: Word,
-    next: Option<&'a Self>,
 }
 
-impl<'a> PathList<'a> {
-    pub fn new(value: &'a Word) -> Self {
+impl PathList {
+    pub fn new(value: &Word) -> Self {
         Self {
             length: 1,
-            value,
             aggregate: *value,
-            next: None,
         }
     }
 
-    pub fn try_add(&'a self, value: &'a Word) -> Option<PathList<'a>> {
+    pub fn try_add(&self, value: &Word) -> Option<PathList> {
         self.aggregate.is_disjoint(value).then(|| Self {
             length: self.length + 1,
-            value,
             aggregate: value.union(&self.aggregate),
-            next: Some(self),
         })
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
         self.length
-    }
-
-    pub fn iter(&self) -> PathListIter {
-        PathListIter(Some(self))
-    }
-}
-
-struct PathListIter<'a>(pub Option<&'a PathList<'a>>);
-
-impl<'a> Iterator for PathListIter<'a> {
-    type Item = &'a Word;
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let l = self.0.map(|p| p.len()).unwrap_or(0);
-        (l, Some(l))
-    }
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.map(|list| {
-            let retval = list.value;
-            self.0 = list.next;
-            retval
-        })
-    }
-}
-
-impl<'a> ExactSizeIterator for PathListIter<'a> {
-    fn len(&self) -> usize {
-        self.0.map(|p| p.len()).unwrap_or(0)
     }
 }
 
@@ -205,18 +171,22 @@ impl Word {
         set
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
         self.0.count_ones() as usize
     }
 
+    #[inline]
     pub fn intersects(&self, other: &Self) -> bool {
         (self.0 & other.0) != 0
     }
 
+    #[inline]
     pub fn is_disjoint(&self, other: &Self) -> bool {
         (self.0 & other.0) == 0
     }
 
+    #[inline]
     pub fn union(&self, other: &Self) -> Self {
         Self(self.0 | other.0)
     }
@@ -329,9 +299,9 @@ fn main() {
 
     let mut blacklist = Blacklist::new();
 
-    let (solution_len, solutions) = words.iter().map(|w| &node_indices[w]).enumerate().fold(
+    let (solution_len, solutions) = words.iter().map(|w| &node_indices[w]).fold(
         (0, Vec::new()),
-        |(final_len, mut final_set), (i, n)| {
+        |(final_len, mut final_set), n| {
             let (len, set) = deepest_paths(
                 &graph,
                 n,
@@ -367,8 +337,6 @@ fn main() {
             (len, set)
         },
     );
-
-    //println!("Final blacklist size: {}", blacklist.0.len());
 
     fn deepest_paths<'g>(
         graph: &'g Graph<Word>,
