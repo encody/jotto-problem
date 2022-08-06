@@ -13,6 +13,7 @@ use std::{
     cmp::Ordering,
     collections::{BTreeSet, HashMap},
     fs,
+    ops::Bound,
     str::FromStr,
 };
 
@@ -271,8 +272,6 @@ fn main() {
         })
         .collect::<BTreeSet<Word>>();
 
-    let words = words.into_iter().collect::<Vec<_>>();
-
     println!(
         "Found {} unique {WORD_LENGTH}-letter combinations",
         words.len(),
@@ -284,17 +283,16 @@ fn main() {
 
     let graph = words
         .iter()
-        .enumerate()
         // deepest_paths will go through the words in order, so we only need to set up the
         // graph from back to front. Each word will only have links to words that appear
         // later in the words list.
         .rev()
-        .fold(Graph::new(words.len()), |mut graph, (i, word)| {
+        .fold(Graph::new(words.len()), |mut graph, word| {
             let node_ix = graph.add_node(*word);
             node_indices.insert(word, node_ix.clone());
 
-            words[(i + 1)..]
-                .iter()
+            words
+                .range((Bound::Excluded(word), Bound::Unbounded))
                 .filter(|w| word.is_disjoint(*w))
                 .for_each(|w| {
                     graph.add_edge(&node_ix, node_indices[w].clone());
@@ -309,8 +307,8 @@ fn main() {
 
     let (solution_len, solutions) = words
         .iter()
-        .map(|w| &node_indices[w])
-        .map(|n| {
+        .map(|w| {
+            let n = &node_indices[w];
             deepest_paths(
                 &graph,
                 n,
